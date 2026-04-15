@@ -30,6 +30,8 @@ import org.signal.core.ui.BottomSheetUtil
 import org.signal.core.ui.compose.BottomSheets
 import org.signal.core.ui.compose.ComposeBottomSheetDialogFragment
 import org.thoughtcrime.securesms.R
+import org.thoughtcrime.securesms.avatar.AvatarImage
+import org.thoughtcrime.securesms.recipients.Recipient
 import org.thoughtcrime.securesms.util.NameUtil
 
 /**
@@ -61,14 +63,19 @@ class AccountSwitcherBottomSheet : ComposeBottomSheetDialogFragment() {
     val application = requireContext().applicationContext as android.app.Application
     val registry = AccountRegistry.getInstance(application)
     val accounts = remember {
+      AccountSwitcher.migrateToMultiAccountIfNeeded(application)
       AccountSwitcher.syncRegistryWithActiveAccount(application)
       registry.getAllAccounts()
     }
     val activeAccount = accounts.find { it.isActive }
+    val selfRecipient = remember {
+      try { Recipient.self() } catch (e: Exception) { null }
+    }
 
     AccountSwitcherContent(
       accounts = accounts,
       activeAccountId = activeAccount?.accountId,
+      selfRecipient = selfRecipient,
       onAccountClick = { accountId ->
         callback?.onAccountSelected(accountId)
         dismissAllowingStateLoss()
@@ -89,6 +96,7 @@ class AccountSwitcherBottomSheet : ComposeBottomSheetDialogFragment() {
 fun AccountSwitcherContent(
   accounts: List<AccountRegistry.AccountEntry>,
   activeAccountId: String?,
+  selfRecipient: Recipient? = null,
   onAccountClick: (String) -> Unit,
   onAddAccountClick: () -> Unit,
   onSettingsClick: () -> Unit
@@ -107,9 +115,11 @@ fun AccountSwitcherContent(
     )
 
     for (account in accounts) {
+      val isActive = account.accountId == activeAccountId
       AccountRow(
         account = account,
-        isActive = account.accountId == activeAccountId,
+        isActive = isActive,
+        selfRecipient = if (isActive) selfRecipient else null,
         onClick = { onAccountClick(account.accountId) }
       )
     }
@@ -187,6 +197,7 @@ fun AccountSwitcherContent(
 private fun AccountRow(
   account: AccountRegistry.AccountEntry,
   isActive: Boolean,
+  selfRecipient: Recipient? = null,
   onClick: () -> Unit
 ) {
   Row(
@@ -196,23 +207,28 @@ private fun AccountRow(
       .clickable(onClick = onClick)
       .padding(horizontal = 24.dp, vertical = 12.dp)
   ) {
-    // Account avatar placeholder
-    Box(
-      contentAlignment = Alignment.Center,
-      modifier = Modifier
-        .size(40.dp)
-        .clip(CircleShape)
-        .background(
-          if (isActive) MaterialTheme.colorScheme.primary
-          else MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-      Text(
-        text = getAccountInitial(account),
-        style = MaterialTheme.typography.titleMedium,
-        color = if (isActive) MaterialTheme.colorScheme.onPrimary
-                else MaterialTheme.colorScheme.onSurfaceVariant
+    if (selfRecipient != null) {
+      AvatarImage(
+        recipient = selfRecipient,
+        modifier = Modifier
+          .size(40.dp)
+          .clip(CircleShape),
+        contentDescription = null
       )
+    } else {
+      Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+          .size(40.dp)
+          .clip(CircleShape)
+          .background(MaterialTheme.colorScheme.surfaceVariant)
+      ) {
+        Text(
+          text = getAccountInitial(account),
+          style = MaterialTheme.typography.titleMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+      }
     }
 
     Spacer(modifier = Modifier.width(16.dp))

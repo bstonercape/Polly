@@ -8,6 +8,7 @@ package org.thoughtcrime.securesms.registration.ui.welcome
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.View
+import androidx.activity.OnBackPressedCallback
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.activityViewModels
 import androidx.navigation.fragment.findNavController
@@ -21,6 +22,7 @@ import org.thoughtcrime.securesms.components.ViewBinderDelegate
 import org.thoughtcrime.securesms.databinding.FragmentRegistrationWelcomeV3Binding
 import org.thoughtcrime.securesms.registration.fragments.RegistrationViewDelegate.setDebugLogSubmitMultiTapView
 import org.thoughtcrime.securesms.registration.fragments.WelcomePermissions
+import org.thoughtcrime.securesms.registration.ui.RegistrationActivity
 import org.thoughtcrime.securesms.registration.ui.RegistrationCheckpoint
 import org.thoughtcrime.securesms.registration.ui.RegistrationViewModel
 import org.thoughtcrime.securesms.registration.ui.permissions.GrantPermissionsFragment
@@ -52,6 +54,17 @@ class WelcomeFragment : LoggingFragment(R.layout.fragment_registration_welcome_v
     binding.welcomeTermsButton.setOnClickListener { onTermsClicked() }
     binding.welcomeTransferOrRestore.setOnClickListener { onRestoreOrTransferClicked() }
     binding.welcomeTransferOrRestore.visible = !sharedViewModel.isReregister
+
+    val registrationActivity = activity as? RegistrationActivity
+    if (registrationActivity?.isAddingAccount == true) {
+      binding.welcomeBackButton.visible = true
+      binding.welcomeBackButton.setOnClickListener { registrationActivity.cancelAddAccount() }
+      requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, object : OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+          registrationActivity.cancelAddAccount()
+        }
+      })
+    }
 
     if (BuildConfig.LINK_DEVICE_UX_ENABLED) {
       binding.image.setOnLongClickListener {

@@ -206,6 +206,13 @@ object AccountSwitcher {
         displayName = null
       )
       Log.i(TAG, "Migration complete. Active account: $accountId")
+    } else if (AccountFileManager.accountHasData(application, "account-0")) {
+      // Database was already migrated to account-0 but the registry was cleared
+      // (e.g., during development or after a partial data wipe). Re-register the
+      // account without moving any files.
+      Log.i(TAG, "account-0 data found but registry is empty — re-registering account-0")
+      registry.addAccount(setActive = true)
+      Log.i(TAG, "Re-registration complete. Active account: account-0")
     } else {
       // No existing data -- this is a fresh install.
       // The first account will be created during registration.
