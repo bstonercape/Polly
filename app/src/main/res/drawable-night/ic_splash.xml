@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  ~ Copyright 2026 Signal Messenger, LLC
-  ~ SPDX-License-Identifier: AGPL-3.0-only
-  -->
-
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="192dp"
     android:height="192dp"
-    android:viewportWidth="1387"
-    android:viewportHeight="1387">
+    android:viewportWidth="2300"
+    android:viewportHeight="2300">
+  <group
+      android:translateX="456"
+      android:translateY="456">
+
+
   <group>
     <clip-path android:pathData="M696 189.439C973.323 189.439 1198.25 414.365 1198.25 691.688C1198.25 969.01 973.323 1193.94 696 1193.94C608.147 1193.94 525.452 1171.39 453.486 1131.68C442.393 1125.18 429.094 1122.93 416.139 1125.89L415.658 1126L214.803 1172.89L261.686 972.313L261.759 971.999L261.822 971.684C264.302 959.283 262.865 945.872 255.971 934.13C216.283 862.182 193.751 779.512 193.751 691.688C193.751 414.365 418.677 189.439 696 189.439Z"/>
     <path
@@ -151,4 +151,7 @@
   <path
       android:fillColor="#fff"
       android:pathData="M885.6663,417.121A12.6667,12.6667,0,1,0,910.9997,417.121A12.6667,12.6667,0,1,0,885.6663,417.121Z"/>
+
+  
+  </group>
 </vector>
