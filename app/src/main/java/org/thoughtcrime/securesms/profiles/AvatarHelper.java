@@ -1,6 +1,7 @@
 package org.thoughtcrime.securesms.profiles;
 
 
+import android.app.Application;
 import android.content.Context;
 
 import androidx.annotation.NonNull;
@@ -8,6 +9,7 @@ import androidx.annotation.Nullable;
 
 import org.signal.core.util.StreamUtil;
 import org.signal.core.util.logging.Log;
+import org.thoughtcrime.securesms.account.AccountRegistry;
 import org.thoughtcrime.securesms.crypto.AttachmentSecret;
 import org.thoughtcrime.securesms.crypto.AttachmentSecretProvider;
 import org.thoughtcrime.securesms.crypto.ModernDecryptingPartInputStream;
@@ -34,13 +36,98 @@ public class AvatarHelper {
   public static int  AVATAR_DIMENSIONS                 = 1024;
   public static long AVATAR_DOWNLOAD_FAILSAFE_MAX_SIZE = ByteUnit.MEGABYTES.toBytes(10);
 
-  private static final String AVATAR_DIRECTORY = "avatars";
+  private static final String AVATAR_DIRECTORY      = "avatars";
+  private static final String SELF_AVATAR_FILENAME  = "self";
 
-  private static File avatarDirectory;
+  private static File   avatarDirectory;
+  private static String activeAccountId;
+
+  /**
+   * Must be called during account switches so the avatar directory is re-resolved
+   * for the new active account. Also clears the cached directory reference.
+   */
+  public static void resetForAccountSwitch(@NonNull String newAccountId) {
+    activeAccountId = newAccountId;
+    avatarDirectory = null;
+  }
+
+  /**
+   * Copies the active account's self avatar to a fixed filename ("self") within its
+   * avatar directory, so it can be loaded by the account switcher UI without knowing
+   * the recipient ID or opening the inactive account's database.
+   *
+   * Safe to call even when no avatar exists; it is a no-op in that case.
+   */
+  public static void writeSelfAvatarCopy(@NonNull Context context) {
+    try {
+      RecipientId selfId          = Recipient.self().getId();
+      File        recipientFile   = getAvatarFile(context, selfId, false);
+      if (!recipientFile.exists() || recipientFile.length() == 0) return;
+
+      File selfFile = new File(getAvatarDirectory(context), SELF_AVATAR_FILENAME);
+      try (java.io.FileInputStream  fis = new java.io.FileInputStream(recipientFile);
+           java.io.FileOutputStream fos = new java.io.FileOutputStream(selfFile)) {
+        StreamUtil.copy(fis, fos);
+      }
+    } catch (Exception e) {
+      Log.w(TAG, "Failed to write self avatar copy", e);
+    }
+  }
+
+  /**
+   * Returns true if a self avatar is available for the given account.
+   * Works for both active and non-active accounts.
+   */
+  public static boolean hasSelfAvatarForAccount(@NonNull Context context, @NonNull String accountId) {
+    File selfFile = getSelfFileForAccount(context, accountId);
+    return selfFile.exists() && selfFile.length() > 0;
+  }
+
+  /**
+   * Returns a decrypted InputStream for the self avatar of the given account.
+   * Caller must close the stream. Only call if {@link #hasSelfAvatarForAccount} is true.
+   */
+  public static @NonNull InputStream getSelfAvatarStreamForAccount(@NonNull Context context, @NonNull String accountId) throws IOException {
+    AttachmentSecret attachmentSecret = AttachmentSecretProvider.getInstance(context).getOrCreateAttachmentSecret();
+    return ModernDecryptingPartInputStream.createFor(attachmentSecret, getSelfFileForAccount(context, accountId), 0);
+  }
+
+  private static @NonNull File getSelfFileForAccount(@NonNull Context context, @NonNull String accountId) {
+    File baseDir = context.getDir(AVATAR_DIRECTORY, Context.MODE_PRIVATE);
+    return new File(new File(baseDir, accountId), SELF_AVATAR_FILENAME);
+  }
 
   private static File getAvatarDirectory(@NonNull Context context) {
     if (avatarDirectory == null) {
-      avatarDirectory = context.getDir(AVATAR_DIRECTORY, Context.MODE_PRIVATE);
+      File baseDir = context.getDir(AVATAR_DIRECTORY, Context.MODE_PRIVATE);
+
+      // Resolve the active account ID if not already set
+      String accountId = activeAccountId;
+      if (accountId == null) {
+        try {
+          AccountRegistry.AccountEntry active = AccountRegistry.getInstance(
+              (Application) context.getApplicationContext()
+          ).getActiveAccount();
+          if (active != null) {
+            accountId = active.getAccountId();
+            activeAccountId = accountId;
+          }
+        } catch (Exception e) {
+          Log.w(TAG, "Failed to resolve active account for avatar directory", e);
+        }
+      }
+
+      if (accountId != null) {
+        // Use a per-account subdirectory to prevent collisions between accounts
+        // that share the same RecipientId values (each DB auto-increments from 1).
+        File accountDir = new File(baseDir, accountId);
+        if (!accountDir.exists()) {
+          accountDir.mkdirs();
+        }
+        avatarDirectory = accountDir;
+      } else {
+        avatarDirectory = baseDir;
+      }
     }
     return avatarDirectory;
   }
@@ -93,6 +180,13 @@ public class AvatarHelper {
    */
   public static void delete(@NonNull Context context, @NonNull RecipientId recipientId) {
     getAvatarFile(context, recipientId).delete();
+    try {
+      if (Recipient.self().getId().equals(recipientId)) {
+        new File(getAvatarDirectory(context), SELF_AVATAR_FILENAME).delete();
+      }
+    } catch (Exception e) {
+      Log.w(TAG, "Failed to delete self avatar copy", e);
+    }
     Recipient.live(recipientId).refresh();
   }
 
@@ -153,6 +247,16 @@ public class AvatarHelper {
       StreamUtil.copy(inputStream, outputStream);
     } finally {
       StreamUtil.close(outputStream);
+    }
+
+    // Keep the fixed "self" file in sync so the account switcher can show this avatar
+    // without needing to open the account's database.
+    try {
+      if (Recipient.self().getId().equals(recipientId)) {
+        writeSelfAvatarCopy(context);
+      }
+    } catch (Exception e) {
+      Log.w(TAG, "Failed to write self avatar copy after setAvatar", e);
     }
   }
 

@@ -33,13 +33,15 @@ class MainToolbarViewModel : ViewModel() {
   val state: StateFlow<MainToolbarState> = internalStateFlow
 
   fun refresh() {
+    val nextVersion = internalStateFlow.value.selfVersion + 1
+
     viewModelScope.launch {
       val self = withContext(SignalDispatchers.IO) {
         Recipient.self().resolve()
       }
 
       internalStateFlow.update {
-        it.copy(self = self)
+        it.copy(self = self, selfVersion = nextVersion)
       }
     }
 

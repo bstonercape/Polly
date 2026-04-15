@@ -158,6 +158,7 @@ enum class MainToolbarMode(val crossFadeKey: CrossFadeKey) {
 data class MainToolbarState(
   val toolbarColor: Color? = null,
   val self: Recipient = Recipient.UNKNOWN,
+  val selfVersion: Int = 0,
   val mode: MainToolbarMode = MainToolbarMode.FULL,
   val destination: MainNavigationListLocation = MainNavigationListLocation.CHATS,
   val chatFilter: ConversationFilter = ConversationFilter.OFF,
@@ -428,9 +429,14 @@ private fun PrimaryToolbar(
       }
     },
     title = {
-      Text(
-        text = stringResource(R.string.app_name)
-      )
+      val profileName = state.self.profileName.toString()
+      val titleText = if (profileName.isNotBlank()) {
+        profileName
+      } else {
+        state.self.e164.orElse(null)?.let { formatE164ForDisplay(it) }
+          ?: stringResource(R.string.app_name)
+      }
+      Text(text = titleText)
     },
     actions = {
       NotificationProfileAction(state, callback)
@@ -820,6 +826,15 @@ private fun ArchiveToolbarPreview() {
       callback = MainToolbarCallback.Empty
     )
   }
+}
+
+private fun formatE164ForDisplay(e164: String): String {
+  val usMatch = Regex("""^\+1(\d{3})(\d{3})(\d{4})$""").matchEntire(e164)
+  if (usMatch != null) {
+    val (area, prefix, line) = usMatch.destructured
+    return "($area) $prefix-$line"
+  }
+  return e164
 }
 
 @DayNightPreviews

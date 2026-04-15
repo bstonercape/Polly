@@ -9,6 +9,7 @@ import org.thoughtcrime.securesms.database.KeyValueDatabase
 import org.thoughtcrime.securesms.database.SignalDatabase
 import org.thoughtcrime.securesms.dependencies.AppDependencies
 import org.thoughtcrime.securesms.keyvalue.SignalStore
+import org.thoughtcrime.securesms.profiles.AvatarHelper
 import org.thoughtcrime.securesms.recipients.Recipient
 
 /**
@@ -52,6 +53,7 @@ object AccountSwitcher {
     // Step 1: Tear down network and caches
     Log.d(TAG, "Step 1: Tearing down network and caches")
     AppDependencies.resetAllForAccountSwitch()
+    AvatarHelper.resetForAccountSwitch(targetAccountId)
 
     // Step 2: Flush SignalStore writes before closing
     Log.d(TAG, "Step 2: Flushing pending writes")
@@ -248,6 +250,10 @@ object AccountSwitcher {
           displayName = displayName
         )
       }
+
+      // Ensure the fixed "self" avatar file exists so the account switcher
+      // can display this account's avatar without opening its database.
+      AvatarHelper.writeSelfAvatarCopy(application)
     } catch (e: Exception) {
       Log.w(TAG, "Could not sync registry with active account", e)
     }

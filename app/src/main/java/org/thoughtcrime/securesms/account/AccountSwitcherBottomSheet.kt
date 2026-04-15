@@ -1,5 +1,8 @@
 package org.thoughtcrime.securesms.account
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -16,22 +19,28 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.signal.core.ui.BottomSheetUtil
 import org.signal.core.ui.compose.BottomSheets
 import org.signal.core.ui.compose.ComposeBottomSheetDialogFragment
 import org.thoughtcrime.securesms.R
-import org.thoughtcrime.securesms.avatar.AvatarImage
-import org.thoughtcrime.securesms.recipients.Recipient
+import org.thoughtcrime.securesms.profiles.AvatarHelper
 import org.thoughtcrime.securesms.util.NameUtil
 
 /**
@@ -68,14 +77,10 @@ class AccountSwitcherBottomSheet : ComposeBottomSheetDialogFragment() {
       registry.getAllAccounts()
     }
     val activeAccount = accounts.find { it.isActive }
-    val selfRecipient = remember {
-      try { Recipient.self() } catch (e: Exception) { null }
-    }
 
     AccountSwitcherContent(
       accounts = accounts,
       activeAccountId = activeAccount?.accountId,
-      selfRecipient = selfRecipient,
       onAccountClick = { accountId ->
         callback?.onAccountSelected(accountId)
         dismissAllowingStateLoss()
@@ -96,7 +101,6 @@ class AccountSwitcherBottomSheet : ComposeBottomSheetDialogFragment() {
 fun AccountSwitcherContent(
   accounts: List<AccountRegistry.AccountEntry>,
   activeAccountId: String?,
-  selfRecipient: Recipient? = null,
   onAccountClick: (String) -> Unit,
   onAddAccountClick: () -> Unit,
   onSettingsClick: () -> Unit
@@ -115,11 +119,9 @@ fun AccountSwitcherContent(
     )
 
     for (account in accounts) {
-      val isActive = account.accountId == activeAccountId
       AccountRow(
         account = account,
-        isActive = isActive,
-        selfRecipient = if (isActive) selfRecipient else null,
+        isActive = account.accountId == activeAccountId,
         onClick = { onAccountClick(account.accountId) }
       )
     }
@@ -197,7 +199,6 @@ fun AccountSwitcherContent(
 private fun AccountRow(
   account: AccountRegistry.AccountEntry,
   isActive: Boolean,
-  selfRecipient: Recipient? = null,
   onClick: () -> Unit
 ) {
   Row(
@@ -207,29 +208,12 @@ private fun AccountRow(
       .clickable(onClick = onClick)
       .padding(horizontal = 24.dp, vertical = 12.dp)
   ) {
-    if (selfRecipient != null) {
-      AvatarImage(
-        recipient = selfRecipient,
-        modifier = Modifier
-          .size(40.dp)
-          .clip(CircleShape),
-        contentDescription = null
-      )
-    } else {
-      Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-          .size(40.dp)
-          .clip(CircleShape)
-          .background(MaterialTheme.colorScheme.surfaceVariant)
-      ) {
-        Text(
-          text = getAccountInitial(account),
-          style = MaterialTheme.typography.titleMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-      }
-    }
+    AccountAvatarImage(
+      account = account,
+      modifier = Modifier
+        .size(40.dp)
+        .clip(CircleShape)
+    )
 
     Spacer(modifier = Modifier.width(16.dp))
 
@@ -237,7 +221,7 @@ private fun AccountRow(
       modifier = Modifier.weight(1f)
     ) {
       Text(
-        text = account.displayName ?: account.e164 ?: account.accountId,
+        text = account.displayName ?: account.e164?.let { formatPhoneNumber(it) } ?: account.accountId,
         style = MaterialTheme.typography.bodyLarge,
         fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
         maxLines = 1,
@@ -246,7 +230,7 @@ private fun AccountRow(
 
       if (account.e164 != null && account.displayName != null && account.displayName != account.e164) {
         Text(
-          text = account.e164,
+          text = formatPhoneNumber(account.e164),
           style = MaterialTheme.typography.bodyMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           maxLines = 1,
@@ -266,7 +250,58 @@ private fun AccountRow(
   }
 }
 
+@Composable
+private fun AccountAvatarImage(
+  account: AccountRegistry.AccountEntry,
+  modifier: Modifier = Modifier
+) {
+  val context = LocalContext.current
+  val bitmap by produceState<Bitmap?>(initialValue = null, account.accountId) {
+    value = withContext(Dispatchers.IO) {
+      try {
+        if (AvatarHelper.hasSelfAvatarForAccount(context, account.accountId)) {
+          AvatarHelper.getSelfAvatarStreamForAccount(context, account.accountId).use { stream ->
+            BitmapFactory.decodeStream(stream)
+          }
+        } else null
+      } catch (e: Exception) {
+        null
+      }
+    }
+  }
+
+  if (bitmap != null) {
+    Image(
+      bitmap = bitmap!!.asImageBitmap(),
+      contentDescription = null,
+      contentScale = ContentScale.Crop,
+      modifier = modifier
+    )
+  } else {
+    Box(
+      contentAlignment = Alignment.Center,
+      modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+      Text(
+        text = getAccountInitial(account),
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+      )
+    }
+  }
+}
+
 private fun getAccountInitial(account: AccountRegistry.AccountEntry): String {
   val name = account.displayName ?: account.e164 ?: account.accountId
   return NameUtil.getAbbreviation(name) ?: name.take(1).uppercase()
+}
+
+private fun formatPhoneNumber(e164: String): String {
+  // Format US/Canada numbers (+1XXXXXXXXXX) as (XXX) XXX-XXXX
+  val usMatch = Regex("""^\+1(\d{3})(\d{3})(\d{4})$""").matchEntire(e164)
+  if (usMatch != null) {
+    val (area, prefix, line) = usMatch.destructured
+    return "($area) $prefix-$line"
+  }
+  return e164
 }
