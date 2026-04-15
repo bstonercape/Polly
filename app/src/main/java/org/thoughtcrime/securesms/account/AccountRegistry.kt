@@ -33,27 +33,35 @@ class AccountRegistry private constructor(
   companion object {
     private val TAG = Log.tag(AccountRegistry::class.java)
 
-    private const val DATABASE_VERSION = 1
+    private const val DATABASE_VERSION = 2
     const val DATABASE_NAME = "account-registry.db"
 
     private const val TABLE_NAME = "accounts"
     private const val ID = "_id"
     private const val ACCOUNT_ID = "account_id"
     private const val ACI = "aci"
+    private const val PNI = "pni"
     private const val E164 = "e164"
     private const val DISPLAY_NAME = "display_name"
     private const val IS_ACTIVE = "is_active"
     private const val CREATED_AT = "created_at"
+    private const val SERVICE_PASSWORD = "service_password"
+    private const val DEVICE_ID = "device_id"
+    private const val REGISTRATION_ID = "registration_id"
 
     private const val CREATE_TABLE = """
       CREATE TABLE $TABLE_NAME (
         $ID INTEGER PRIMARY KEY AUTOINCREMENT,
         $ACCOUNT_ID TEXT UNIQUE NOT NULL,
         $ACI TEXT,
+        $PNI TEXT,
         $E164 TEXT,
         $DISPLAY_NAME TEXT,
         $IS_ACTIVE INTEGER NOT NULL DEFAULT 0,
-        $CREATED_AT INTEGER NOT NULL DEFAULT 0
+        $CREATED_AT INTEGER NOT NULL DEFAULT 0,
+        $SERVICE_PASSWORD TEXT,
+        $DEVICE_ID INTEGER NOT NULL DEFAULT 1,
+        $REGISTRATION_ID INTEGER NOT NULL DEFAULT 0
       )
     """
 
@@ -81,6 +89,13 @@ class AccountRegistry private constructor(
 
   override fun onUpgrade(db: net.zetetic.database.sqlcipher.SQLiteDatabase, oldVersion: Int, newVersion: Int) {
     Log.i(TAG, "onUpgrade($oldVersion, $newVersion)")
+
+    if (oldVersion < 2) {
+      db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $PNI TEXT")
+      db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $SERVICE_PASSWORD TEXT")
+      db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $DEVICE_ID INTEGER NOT NULL DEFAULT 1")
+      db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $REGISTRATION_ID INTEGER NOT NULL DEFAULT 0")
+    }
   }
 
   /**
@@ -90,16 +105,7 @@ class AccountRegistry private constructor(
     val accounts = mutableListOf<AccountEntry>()
     readableDatabase.query(TABLE_NAME, null, null, null, null, null, "$CREATED_AT ASC").use { cursor ->
       while (cursor.moveToNext()) {
-        accounts.add(
-          AccountEntry(
-            accountId = cursor.getString(cursor.getColumnIndexOrThrow(ACCOUNT_ID)),
-            aci = cursor.getString(cursor.getColumnIndexOrThrow(ACI)),
-            e164 = cursor.getString(cursor.getColumnIndexOrThrow(E164)),
-            displayName = cursor.getString(cursor.getColumnIndexOrThrow(DISPLAY_NAME)),
-            isActive = cursor.getInt(cursor.getColumnIndexOrThrow(IS_ACTIVE)) == 1,
-            createdAt = cursor.getLong(cursor.getColumnIndexOrThrow(CREATED_AT))
-          )
-        )
+        accounts.add(readAccountEntry(cursor))
       }
     }
     return accounts
@@ -111,14 +117,7 @@ class AccountRegistry private constructor(
   fun getActiveAccount(): AccountEntry? {
     readableDatabase.query(TABLE_NAME, null, "$IS_ACTIVE = 1", null, null, null, null).use { cursor ->
       if (cursor.moveToFirst()) {
-        return AccountEntry(
-          accountId = cursor.getString(cursor.getColumnIndexOrThrow(ACCOUNT_ID)),
-          aci = cursor.getString(cursor.getColumnIndexOrThrow(ACI)),
-          e164 = cursor.getString(cursor.getColumnIndexOrThrow(E164)),
-          displayName = cursor.getString(cursor.getColumnIndexOrThrow(DISPLAY_NAME)),
-          isActive = true,
-          createdAt = cursor.getLong(cursor.getColumnIndexOrThrow(CREATED_AT))
-        )
+        return readAccountEntry(cursor)
       }
     }
     return null
@@ -171,13 +170,27 @@ class AccountRegistry private constructor(
   }
 
   /**
-   * Updates the ACI and E164 for an account (called after registration).
+   * Updates the identity and credentials for an account. Called after registration
+   * and on every account activation via [AccountSwitcher.syncRegistryWithActiveAccount].
    */
-  fun updateAccountIdentity(accountId: String, aci: String?, e164: String?, displayName: String?) {
+  fun updateAccountIdentity(
+    accountId: String,
+    aci: String?,
+    pni: String? = null,
+    e164: String?,
+    displayName: String?,
+    servicePassword: String? = null,
+    deviceId: Int? = null,
+    registrationId: Int? = null
+  ) {
     val values = ContentValues().apply {
       put(ACI, aci)
+      put(PNI, pni)
       put(E164, e164)
       put(DISPLAY_NAME, displayName)
+      if (servicePassword != null) put(SERVICE_PASSWORD, servicePassword)
+      if (deviceId != null) put(DEVICE_ID, deviceId)
+      if (registrationId != null) put(REGISTRATION_ID, registrationId)
     }
     writableDatabase.update(TABLE_NAME, values, "$ACCOUNT_ID = ?", arrayOf(accountId))
     Log.i(TAG, "Updated identity for $accountId")
@@ -217,12 +230,35 @@ class AccountRegistry private constructor(
     return 0
   }
 
+  private fun readAccountEntry(cursor: android.database.Cursor): AccountEntry {
+    return AccountEntry(
+      accountId = cursor.getString(cursor.getColumnIndexOrThrow(ACCOUNT_ID)),
+      aci = cursor.getString(cursor.getColumnIndexOrThrow(ACI)),
+      pni = cursor.getString(cursor.getColumnIndexOrThrow(PNI)),
+      e164 = cursor.getString(cursor.getColumnIndexOrThrow(E164)),
+      displayName = cursor.getString(cursor.getColumnIndexOrThrow(DISPLAY_NAME)),
+      isActive = cursor.getInt(cursor.getColumnIndexOrThrow(IS_ACTIVE)) == 1,
+      createdAt = cursor.getLong(cursor.getColumnIndexOrThrow(CREATED_AT)),
+      servicePassword = cursor.getString(cursor.getColumnIndexOrThrow(SERVICE_PASSWORD)),
+      deviceId = cursor.getInt(cursor.getColumnIndexOrThrow(DEVICE_ID)),
+      registrationId = cursor.getInt(cursor.getColumnIndexOrThrow(REGISTRATION_ID))
+    )
+  }
+
   data class AccountEntry(
     val accountId: String,
     val aci: String?,
+    val pni: String?,
     val e164: String?,
     val displayName: String?,
     val isActive: Boolean,
-    val createdAt: Long
-  )
+    val createdAt: Long,
+    val servicePassword: String? = null,
+    val deviceId: Int = 1,
+    val registrationId: Int = 0
+  ) {
+    /** Returns true if this entry has enough credentials to authenticate a WebSocket. */
+    val hasCredentials: Boolean
+      get() = aci != null && servicePassword != null
+  }
 }

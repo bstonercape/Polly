@@ -233,7 +233,11 @@ object AccountSwitcher {
 
     try {
       val aci = SignalStore.account.aci?.toString()
+      val pni = SignalStore.account.pni?.toString()
       val e164 = SignalStore.account.e164
+      val servicePassword = SignalStore.account.servicePassword
+      val deviceId = SignalStore.account.deviceId
+      val registrationId = SignalStore.account.registrationId
 
       val displayName = try {
         val profileName = Recipient.self().profileName.toString()
@@ -246,8 +250,12 @@ object AccountSwitcher {
         registry.updateAccountIdentity(
           accountId = active.accountId,
           aci = aci,
+          pni = pni,
           e164 = e164,
-          displayName = displayName
+          displayName = displayName,
+          servicePassword = servicePassword,
+          deviceId = deviceId,
+          registrationId = registrationId
         )
       }
 
