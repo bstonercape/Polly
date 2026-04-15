@@ -15,8 +15,7 @@ import org.signal.core.util.concurrent.SignalExecutors
 import org.signal.core.util.logging.Log
 import org.thoughtcrime.securesms.MainActivity
 import org.thoughtcrime.securesms.R
-import org.thoughtcrime.securesms.account.AccountRegistry
-import org.thoughtcrime.securesms.account.AccountSwitcher
+import org.thoughtcrime.securesms.account.BackgroundAccountManager
 import org.thoughtcrime.securesms.dependencies.AppDependencies
 import org.thoughtcrime.securesms.jobs.MessageFetchJob
 import org.thoughtcrime.securesms.messages.WebSocketDrainer
@@ -179,59 +178,10 @@ object FcmFetchManager {
       }
     }
 
-    // Drain background accounts if multi-account is active
-    drainBackgroundAccounts(context)
+    // Wake background receivers so they drain their own WebSockets.
+    // This replaces the old approach of cycling through accounts with full singleton switches.
+    BackgroundAccountManager.wakeAll()
 
     return success
-  }
-
-  /**
-   * Cycles through each non-active account, briefly switching singletons to drain
-   * their WebSocket, then switches back to the original active account.
-   *
-   * This ensures background accounts receive messages on FCM wake, even though
-   * they don't maintain persistent WebSocket connections.
-   */
-  private fun drainBackgroundAccounts(context: Context) {
-    val application = AppDependencies.application
-    val registry = AccountRegistry.getInstance(application)
-    val accounts = registry.getAllAccounts()
-    val activeAccount = registry.getActiveAccount()
-
-    if (accounts.size <= 1 || activeAccount == null) {
-      return
-    }
-
-    val backgroundAccounts = accounts.filter { !it.isActive }
-    if (backgroundAccounts.isEmpty()) {
-      return
-    }
-
-    Log.i(TAG, "Draining ${backgroundAccounts.size} background account(s)")
-
-    for (bgAccount in backgroundAccounts) {
-      try {
-        Log.d(TAG, "Draining background account: ${bgAccount.accountId}")
-
-        // Switch to the background account
-        AccountSwitcher.switchToAccount(application, bgAccount.accountId)
-
-        // Drain with a shorter timeout for background accounts
-        val bgTimeout = 30_000L // 30 seconds per background account
-        WebSocketDrainer.blockUntilDrainedAndProcessed(bgTimeout, KEEP_ALIVE_TOKEN)
-
-        Log.d(TAG, "Finished draining background account: ${bgAccount.accountId}")
-      } catch (e: Exception) {
-        Log.w(TAG, "Error draining background account: ${bgAccount.accountId}", e)
-      }
-    }
-
-    // Switch back to the original active account
-    try {
-      AccountSwitcher.switchToAccount(application, activeAccount.accountId)
-      Log.i(TAG, "Restored active account: ${activeAccount.accountId}")
-    } catch (e: Exception) {
-      Log.e(TAG, "CRITICAL: Failed to restore active account after background drain!", e)
-    }
   }
 }

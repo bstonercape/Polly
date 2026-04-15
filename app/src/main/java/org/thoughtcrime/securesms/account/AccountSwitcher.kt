@@ -50,6 +50,10 @@ object AccountSwitcher {
     Log.i(TAG, "Switching from ${currentAccount?.accountId} to $targetAccountId")
     val startTime = System.currentTimeMillis()
 
+    // Step 0: Stop the background receiver for the target account BEFORE we touch the DB
+    Log.d(TAG, "Step 0: Stopping background receiver for target account")
+    BackgroundAccountManager.onAccountSwitch(application, currentAccount?.accountId, targetAccountId)
+
     // Step 1: Tear down network and caches
     Log.d(TAG, "Step 1: Tearing down network and caches")
     AppDependencies.resetAllForAccountSwitch()
@@ -78,6 +82,10 @@ object AccountSwitcher {
     // Step 6: Re-warm caches
     Log.d(TAG, "Step 6: Re-warming caches")
     AppDependencies.recipientCache.warmUp()
+
+    // Step 7: Start background receiver for the previously-active account
+    Log.d(TAG, "Step 7: Starting background receiver for demoted account")
+    BackgroundAccountManager.onAccountSwitchComplete(application, currentAccount?.accountId)
 
     val elapsed = System.currentTimeMillis() - startTime
     Log.i(TAG, "Account switch to $targetAccountId completed in ${elapsed}ms")
@@ -239,6 +247,10 @@ object AccountSwitcher {
       val deviceId = SignalStore.account.deviceId
       val registrationId = SignalStore.account.registrationId
 
+      // Cache identity keys for background decryption
+      val aciIdentityKey = try { SignalStore.account.aciIdentityKey } catch (_: Exception) { null }
+      val pniIdentityKey = try { SignalStore.account.pniIdentityKey } catch (_: Exception) { null }
+
       val displayName = try {
         val profileName = Recipient.self().profileName.toString()
         if (profileName.isNotBlank()) profileName else e164
@@ -255,7 +267,11 @@ object AccountSwitcher {
           displayName = displayName,
           servicePassword = servicePassword,
           deviceId = deviceId,
-          registrationId = registrationId
+          registrationId = registrationId,
+          aciIdentityPublicKey = aciIdentityKey?.publicKey?.serialize(),
+          aciIdentityPrivateKey = aciIdentityKey?.privateKey?.serialize(),
+          pniIdentityPublicKey = pniIdentityKey?.publicKey?.serialize(),
+          pniIdentityPrivateKey = pniIdentityKey?.privateKey?.serialize()
         )
       }
 

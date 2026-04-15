@@ -33,7 +33,7 @@ class AccountRegistry private constructor(
   companion object {
     private val TAG = Log.tag(AccountRegistry::class.java)
 
-    private const val DATABASE_VERSION = 2
+    private const val DATABASE_VERSION = 3
     const val DATABASE_NAME = "account-registry.db"
 
     private const val TABLE_NAME = "accounts"
@@ -48,6 +48,10 @@ class AccountRegistry private constructor(
     private const val SERVICE_PASSWORD = "service_password"
     private const val DEVICE_ID = "device_id"
     private const val REGISTRATION_ID = "registration_id"
+    private const val ACI_IDENTITY_PUBLIC_KEY = "aci_identity_public_key"
+    private const val ACI_IDENTITY_PRIVATE_KEY = "aci_identity_private_key"
+    private const val PNI_IDENTITY_PUBLIC_KEY = "pni_identity_public_key"
+    private const val PNI_IDENTITY_PRIVATE_KEY = "pni_identity_private_key"
 
     private const val CREATE_TABLE = """
       CREATE TABLE $TABLE_NAME (
@@ -61,7 +65,11 @@ class AccountRegistry private constructor(
         $CREATED_AT INTEGER NOT NULL DEFAULT 0,
         $SERVICE_PASSWORD TEXT,
         $DEVICE_ID INTEGER NOT NULL DEFAULT 1,
-        $REGISTRATION_ID INTEGER NOT NULL DEFAULT 0
+        $REGISTRATION_ID INTEGER NOT NULL DEFAULT 0,
+        $ACI_IDENTITY_PUBLIC_KEY BLOB,
+        $ACI_IDENTITY_PRIVATE_KEY BLOB,
+        $PNI_IDENTITY_PUBLIC_KEY BLOB,
+        $PNI_IDENTITY_PRIVATE_KEY BLOB
       )
     """
 
@@ -95,6 +103,13 @@ class AccountRegistry private constructor(
       db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $SERVICE_PASSWORD TEXT")
       db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $DEVICE_ID INTEGER NOT NULL DEFAULT 1")
       db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $REGISTRATION_ID INTEGER NOT NULL DEFAULT 0")
+    }
+
+    if (oldVersion < 3) {
+      db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $ACI_IDENTITY_PUBLIC_KEY BLOB")
+      db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $ACI_IDENTITY_PRIVATE_KEY BLOB")
+      db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $PNI_IDENTITY_PUBLIC_KEY BLOB")
+      db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $PNI_IDENTITY_PRIVATE_KEY BLOB")
     }
   }
 
@@ -181,7 +196,11 @@ class AccountRegistry private constructor(
     displayName: String?,
     servicePassword: String? = null,
     deviceId: Int? = null,
-    registrationId: Int? = null
+    registrationId: Int? = null,
+    aciIdentityPublicKey: ByteArray? = null,
+    aciIdentityPrivateKey: ByteArray? = null,
+    pniIdentityPublicKey: ByteArray? = null,
+    pniIdentityPrivateKey: ByteArray? = null
   ) {
     val values = ContentValues().apply {
       put(ACI, aci)
@@ -191,6 +210,10 @@ class AccountRegistry private constructor(
       if (servicePassword != null) put(SERVICE_PASSWORD, servicePassword)
       if (deviceId != null) put(DEVICE_ID, deviceId)
       if (registrationId != null) put(REGISTRATION_ID, registrationId)
+      if (aciIdentityPublicKey != null) put(ACI_IDENTITY_PUBLIC_KEY, aciIdentityPublicKey)
+      if (aciIdentityPrivateKey != null) put(ACI_IDENTITY_PRIVATE_KEY, aciIdentityPrivateKey)
+      if (pniIdentityPublicKey != null) put(PNI_IDENTITY_PUBLIC_KEY, pniIdentityPublicKey)
+      if (pniIdentityPrivateKey != null) put(PNI_IDENTITY_PRIVATE_KEY, pniIdentityPrivateKey)
     }
     writableDatabase.update(TABLE_NAME, values, "$ACCOUNT_ID = ?", arrayOf(accountId))
     Log.i(TAG, "Updated identity for $accountId")
@@ -241,7 +264,11 @@ class AccountRegistry private constructor(
       createdAt = cursor.getLong(cursor.getColumnIndexOrThrow(CREATED_AT)),
       servicePassword = cursor.getString(cursor.getColumnIndexOrThrow(SERVICE_PASSWORD)),
       deviceId = cursor.getInt(cursor.getColumnIndexOrThrow(DEVICE_ID)),
-      registrationId = cursor.getInt(cursor.getColumnIndexOrThrow(REGISTRATION_ID))
+      registrationId = cursor.getInt(cursor.getColumnIndexOrThrow(REGISTRATION_ID)),
+      aciIdentityPublicKey = cursor.getBlob(cursor.getColumnIndexOrThrow(ACI_IDENTITY_PUBLIC_KEY)),
+      aciIdentityPrivateKey = cursor.getBlob(cursor.getColumnIndexOrThrow(ACI_IDENTITY_PRIVATE_KEY)),
+      pniIdentityPublicKey = cursor.getBlob(cursor.getColumnIndexOrThrow(PNI_IDENTITY_PUBLIC_KEY)),
+      pniIdentityPrivateKey = cursor.getBlob(cursor.getColumnIndexOrThrow(PNI_IDENTITY_PRIVATE_KEY))
     )
   }
 
@@ -255,10 +282,18 @@ class AccountRegistry private constructor(
     val createdAt: Long,
     val servicePassword: String? = null,
     val deviceId: Int = 1,
-    val registrationId: Int = 0
+    val registrationId: Int = 0,
+    val aciIdentityPublicKey: ByteArray? = null,
+    val aciIdentityPrivateKey: ByteArray? = null,
+    val pniIdentityPublicKey: ByteArray? = null,
+    val pniIdentityPrivateKey: ByteArray? = null
   ) {
     /** Returns true if this entry has enough credentials to authenticate a WebSocket. */
     val hasCredentials: Boolean
       get() = aci != null && servicePassword != null
+
+    /** Returns true if this entry has identity keys needed for message decryption. */
+    val hasIdentityKeys: Boolean
+      get() = aciIdentityPublicKey != null && aciIdentityPrivateKey != null
   }
 }
