@@ -3,11 +3,12 @@
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="128dp"
     android:height="128dp"
-    android:viewportWidth="2300"
-    android:viewportHeight="2300">
+    android:viewportWidth="3200"
+    android:viewportHeight="3200">
   <group
-      android:translateX="456"
-      android:translateY="456">
+      android:translateX="906"
+      android:translateY="906">
+
 
 
   <group>
@@ -152,6 +153,7 @@
       android:fillColor="#fff"
       android:pathData="M885.6663,417.121A12.6667,12.6667,0,1,0,910.9997,417.121A12.6667,12.6667,0,1,0,885.6663,417.121Z"/>
 
+  
   
   </group>
 </vector>
