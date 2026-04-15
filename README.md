@@ -1,6 +1,6 @@
 # Polly
 
-![Polly Logo](logo.svg)
+![Polly Logo](logo.png)
 
 Polly is a fork of Signal that allows you to use multiple accounts/phone numbers.
 
