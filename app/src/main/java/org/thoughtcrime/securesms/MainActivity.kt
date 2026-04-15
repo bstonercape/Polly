@@ -1357,10 +1357,11 @@ class MainActivity :
 
   override fun onAddAccountClicked() {
     lifecycleScope.launch(Dispatchers.IO) {
+      val previousAccountId = AccountSwitcher.getActiveAccount(application)?.accountId
       val newAccountId = AccountSwitcher.addAccount(application)
       AccountSwitcher.switchToAccount(application, newAccountId)
       withContext(Dispatchers.Main) {
-        startActivity(RegistrationActivity.newIntentForNewRegistration(this@MainActivity, intent))
+        startActivity(RegistrationActivity.newIntentForAddAccount(this@MainActivity, intent, newAccountId, previousAccountId))
       }
     }
   }

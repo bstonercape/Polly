@@ -11,11 +11,16 @@ import android.os.Bundle
 import androidx.activity.viewModels
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.ActivityNavigator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.signal.core.util.logging.Log
 import org.thoughtcrime.securesms.BaseActivity
 import org.thoughtcrime.securesms.MainActivity
 import org.thoughtcrime.securesms.R
+import org.thoughtcrime.securesms.account.AccountSwitcher
 import org.thoughtcrime.securesms.keyvalue.SignalStore
 import org.thoughtcrime.securesms.registration.sms.SmsRetrieverReceiver
 import org.thoughtcrime.securesms.registration.util.RegistrationUtil
@@ -37,6 +42,9 @@ class RegistrationActivity : BaseActivity() {
     lifecycle.addObserver(SmsRetrieverObserver())
   }
 
+  val isAddingAccount: Boolean
+    get() = intent.hasExtra(ADD_ACCOUNT_NEW_ID_EXTRA)
+
   override fun onCreate(savedInstanceState: Bundle?) {
     dynamicTheme.onCreate(this)
 
@@ -49,6 +57,26 @@ class RegistrationActivity : BaseActivity() {
       if (it >= RegistrationCheckpoint.LOCAL_REGISTRATION_COMPLETE) {
         RegistrationUtil.maybeMarkRegistrationComplete()
         handleSuccessfulVerify()
+      }
+    }
+  }
+
+  /**
+   * Cancels an in-progress "add account" flow. Switches back to the previous account,
+   * removes the partially-created account from the registry, and deletes its directory.
+   */
+  fun cancelAddAccount() {
+    val newAccountId = intent.getStringExtra(ADD_ACCOUNT_NEW_ID_EXTRA) ?: return
+    val previousAccountId = intent.getStringExtra(ADD_ACCOUNT_PREVIOUS_ID_EXTRA)
+
+    lifecycleScope.launch(Dispatchers.IO) {
+      if (previousAccountId != null) {
+        AccountSwitcher.switchToAccount(application, previousAccountId)
+      }
+      AccountSwitcher.removeAccount(application, newAccountId)
+      withContext(Dispatchers.Main) {
+        startActivity(MainActivity.clearTop(this@RegistrationActivity))
+        finish()
       }
     }
   }
@@ -82,11 +110,23 @@ class RegistrationActivity : BaseActivity() {
 
   companion object {
     const val RE_REGISTRATION_EXTRA: String = "re_registration"
+    const val ADD_ACCOUNT_NEW_ID_EXTRA: String = "add_account_new_id"
+    const val ADD_ACCOUNT_PREVIOUS_ID_EXTRA: String = "add_account_previous_id"
 
     @JvmStatic
     fun newIntentForNewRegistration(context: Context, originalIntent: Intent): Intent {
       return Intent(context, RegistrationActivity::class.java).apply {
         putExtra(RE_REGISTRATION_EXTRA, false)
+        setData(originalIntent.data)
+      }
+    }
+
+    @JvmStatic
+    fun newIntentForAddAccount(context: Context, originalIntent: Intent, newAccountId: String, previousAccountId: String?): Intent {
+      return Intent(context, RegistrationActivity::class.java).apply {
+        putExtra(RE_REGISTRATION_EXTRA, false)
+        putExtra(ADD_ACCOUNT_NEW_ID_EXTRA, newAccountId)
+        previousAccountId?.let { putExtra(ADD_ACCOUNT_PREVIOUS_ID_EXTRA, it) }
         setData(originalIntent.data)
       }
     }

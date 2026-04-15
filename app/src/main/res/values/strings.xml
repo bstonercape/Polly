@@ -9826,4 +9826,7 @@
     <string name="CouldNotCompleteBackupRestoreSheet__body_retry">To try again, uninstall and re-install Polly on this device, and choose \"Restore or transfer\".</string>
 
     <!-- EOF -->
+
+    <!-- Content description for the back button on the welcome screen when adding a second account -->
+    <string name="AccountSwitcher__cancel_add_account">Cancel adding account</string>
 </resources>
