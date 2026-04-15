@@ -128,8 +128,16 @@ object BackgroundAccountManager {
   }
 
   private fun startReceiver(application: Application, account: AccountRegistry.AccountEntry) {
-    val receiver = BackgroundAccountReceiver(application, account)
-    receivers[account.accountId] = receiver
-    receiver.start()
+    if (!AccountFileManager.accountHasData(application, account.accountId)) {
+      Log.w(TAG, "[${account.accountId}] Database not yet initialized — skipping receiver start")
+      return
+    }
+    try {
+      val receiver = BackgroundAccountReceiver(application, account)
+      receivers[account.accountId] = receiver
+      receiver.start()
+    } catch (e: Exception) {
+      Log.w(TAG, "[${account.accountId}] Failed to start background receiver", e)
+    }
   }
 }

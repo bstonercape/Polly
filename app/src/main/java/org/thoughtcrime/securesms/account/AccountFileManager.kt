@@ -133,6 +133,8 @@ object AccountFileManager {
    */
   fun accountHasData(application: Application, accountId: String): Boolean {
     val signalDb = File(getAccountDir(application, accountId), "signal.db")
-    return signalDb.exists()
+    // A valid SQLCipher database is at least one page (512 bytes minimum).
+    // A zero-length or trivially small file means the db was never properly initialized.
+    return signalDb.exists() && signalDb.length() >= 512
   }
 }

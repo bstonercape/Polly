@@ -1,6 +1,7 @@
 package org.thoughtcrime.securesms.components.settings.app
 
 import androidx.lifecycle.LiveData
+import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.map
 import io.reactivex.rxjava3.disposables.CompositeDisposable
@@ -33,7 +34,11 @@ class AppSettingsViewModel : ViewModel() {
   private val disposables = CompositeDisposable()
 
   val state: LiveData<AppSettingsState> = store.stateLiveData
-  val self: LiveData<BioRecipientState> = Recipient.self().live().liveData.map { BioRecipientState(it) }
+  val self: LiveData<BioRecipientState> = if (SignalStore.account.isRegistered) {
+    Recipient.self().live().liveData.map { BioRecipientState(it) }
+  } else {
+    MutableLiveData()
+  }
 
   init {
     store.update(unreadPaymentsLiveData) { payments, state -> state.copy(unreadPaymentsCount = payments.map { it.unreadCount }.orElse(0)) }

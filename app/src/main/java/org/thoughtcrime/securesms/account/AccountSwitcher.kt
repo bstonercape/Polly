@@ -140,6 +140,7 @@ object AccountSwitcher {
     val active = registry.getActiveAccount()
     require(active?.accountId != accountId) { "Cannot remove the currently active account" }
 
+    BackgroundAccountManager.stopReceiver(accountId)
     AccountFileManager.deleteAccountDir(application, accountId)
     registry.removeAccount(accountId)
     Log.i(TAG, "Removed account: $accountId")

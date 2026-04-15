@@ -14,14 +14,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.signal.core.ui.BottomSheetUtil
 import org.signal.core.ui.compose.BottomSheets
@@ -71,12 +78,47 @@ class AccountSwitcherBottomSheet : ComposeBottomSheetDialogFragment() {
   override fun SheetContent() {
     val application = requireContext().applicationContext as android.app.Application
     val registry = AccountRegistry.getInstance(application)
-    val accounts = remember {
-      AccountSwitcher.migrateToMultiAccountIfNeeded(application)
-      AccountSwitcher.syncRegistryWithActiveAccount(application)
-      registry.getAllAccounts()
+    var accounts by remember {
+      mutableStateOf(run {
+        AccountSwitcher.migrateToMultiAccountIfNeeded(application)
+        AccountSwitcher.syncRegistryWithActiveAccount(application)
+        registry.getAllAccounts()
+      })
     }
     val activeAccount = accounts.find { it.isActive }
+    val scope = rememberCoroutineScope()
+    var accountToRemove by remember { mutableStateOf<AccountRegistry.AccountEntry?>(null) }
+
+    accountToRemove?.let { account ->
+      val label = account.displayName ?: account.e164?.let { formatPhoneNumber(it) } ?: account.accountId
+      AlertDialog(
+        onDismissRequest = { accountToRemove = null },
+        title = { Text("Remove account?") },
+        text = { Text("All data for $label will be permanently deleted from this device.") },
+        confirmButton = {
+          TextButton(
+            onClick = {
+              val id = account.accountId
+              accountToRemove = null
+              scope.launch(Dispatchers.IO) {
+                AccountSwitcher.removeAccount(application, id)
+                val updated = registry.getAllAccounts()
+                withContext(Dispatchers.Main) {
+                  accounts = updated
+                }
+              }
+            }
+          ) {
+            Text("Remove", color = MaterialTheme.colorScheme.error)
+          }
+        },
+        dismissButton = {
+          TextButton(onClick = { accountToRemove = null }) {
+            Text("Cancel")
+          }
+        }
+      )
+    }
 
     AccountSwitcherContent(
       accounts = accounts,
@@ -92,6 +134,9 @@ class AccountSwitcherBottomSheet : ComposeBottomSheetDialogFragment() {
       onSettingsClick = {
         callback?.onSettingsClicked()
         dismissAllowingStateLoss()
+      },
+      onRemoveAccountClick = { account ->
+        accountToRemove = account
       }
     )
   }
@@ -103,7 +148,8 @@ fun AccountSwitcherContent(
   activeAccountId: String?,
   onAccountClick: (String) -> Unit,
   onAddAccountClick: () -> Unit,
-  onSettingsClick: () -> Unit
+  onSettingsClick: () -> Unit,
+  onRemoveAccountClick: (AccountRegistry.AccountEntry) -> Unit = {}
 ) {
   Column(
     modifier = Modifier
@@ -119,10 +165,14 @@ fun AccountSwitcherContent(
     )
 
     for (account in accounts) {
+      val isActive = account.accountId == activeAccountId
       AccountRow(
         account = account,
-        isActive = account.accountId == activeAccountId,
-        onClick = { onAccountClick(account.accountId) }
+        isActive = isActive,
+        onClick = { onAccountClick(account.accountId) },
+        onRemoveClick = if (!isActive) {
+          { onRemoveAccountClick(account) }
+        } else null
       )
     }
 
@@ -199,14 +249,15 @@ fun AccountSwitcherContent(
 private fun AccountRow(
   account: AccountRegistry.AccountEntry,
   isActive: Boolean,
-  onClick: () -> Unit
+  onClick: () -> Unit,
+  onRemoveClick: (() -> Unit)? = null
 ) {
   Row(
     verticalAlignment = Alignment.CenterVertically,
     modifier = Modifier
       .fillMaxWidth()
       .clickable(onClick = onClick)
-      .padding(horizontal = 24.dp, vertical = 12.dp)
+      .padding(start = 24.dp, end = 8.dp, top = 12.dp, bottom = 12.dp)
   ) {
     AccountAvatarImage(
       account = account,
@@ -244,8 +295,22 @@ private fun AccountRow(
         imageVector = ImageVector.vectorResource(R.drawable.symbol_check_24),
         contentDescription = "Active account",
         tint = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.size(20.dp)
+        modifier = Modifier
+          .size(20.dp)
+          .padding(end = 4.dp)
       )
+    } else if (onRemoveClick != null) {
+      IconButton(
+        onClick = onRemoveClick,
+        modifier = Modifier.size(40.dp)
+      ) {
+        Icon(
+          imageVector = ImageVector.vectorResource(R.drawable.symbol_x_circle_24),
+          contentDescription = "Remove account",
+          tint = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.size(20.dp)
+        )
+      }
     }
   }
 }
