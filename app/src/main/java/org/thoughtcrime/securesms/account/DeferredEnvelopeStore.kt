@@ -1,20 +1,26 @@
 package org.thoughtcrime.securesms.account
 
 import android.app.Application
+import android.database.sqlite.SQLiteException
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 import org.signal.core.util.logging.Log
 import org.thoughtcrime.securesms.crypto.DatabaseSecretProvider
 import org.thoughtcrime.securesms.database.SqlCipherLibraryLoader
 import org.whispersystems.signalservice.internal.push.Envelope
 import java.io.Closeable
+import java.io.File
 
 /**
- * Manages the `deferred_envelopes` table in a background account's signal.db.
- * Stores raw serialized envelopes received while the account is inactive, to be
- * processed through the full [MessageContentProcessor] pipeline when the account
- * becomes active.
+ * Lightweight store for raw envelopes received by the background receiver while
+ * an account is inactive. Lives in its own dedicated `deferred-envelopes.db` file
+ * (NOT inside signal.db), so it works independently of the account's main database
+ * state and can be safely created even before the account has fully initialized.
  *
- * The table is created on first use (no schema migration needed).
+ * The file is created on first open and the single table is created on first use —
+ * no schema migrations needed. If the file is corrupted it is deleted and recreated.
+ *
+ * Envelopes are processed through the full [MessageContentProcessor] pipeline when
+ * the account becomes active via [IncomingMessageObserver.drainDeferredEnvelopes].
  */
 class DeferredEnvelopeStore(
   application: Application,
@@ -26,23 +32,39 @@ class DeferredEnvelopeStore(
   init {
     SqlCipherLibraryLoader.load()
     val databaseSecret = DatabaseSecretProvider.getOrCreateDatabaseSecret(application)
-    val dbPath = AccountFileManager.getAccountDatabasePath(application, accountId, "signal.db")
+    val dbFile = File(AccountFileManager.getAccountDir(application, accountId), DB_NAME)
 
-    db = SQLiteDatabase.openDatabase(
-      dbPath,
-      databaseSecret.asString(),
-      null,
-      SQLiteDatabase.OPEN_READWRITE,
-      null,
-      null
-    )
-
+    db = openOrRecreate(dbFile, databaseSecret.asString())
     ensureTable()
   }
 
   /**
-   * Stores a raw envelope for later processing.
+   * Opens the database, recreating it from scratch if the file is corrupt.
    */
+  private fun openOrRecreate(file: File, key: String): SQLiteDatabase {
+    return try {
+      SQLiteDatabase.openDatabase(
+        file.absolutePath,
+        key,
+        null,
+        SQLiteDatabase.OPEN_READWRITE or SQLiteDatabase.CREATE_IF_NECESSARY,
+        null,
+        null
+      )
+    } catch (e: SQLiteException) {
+      Log.w(TAG, "[$accountId] Deferred store corrupt, deleting and recreating: ${file.name}", e)
+      file.delete()
+      SQLiteDatabase.openDatabase(
+        file.absolutePath,
+        key,
+        null,
+        SQLiteDatabase.OPEN_READWRITE or SQLiteDatabase.CREATE_IF_NECESSARY,
+        null,
+        null
+      )
+    }
+  }
+
   fun insert(envelope: Envelope, serverDeliveredTimestamp: Long) {
     db.compileStatement(
       "INSERT INTO $TABLE_NAME ($ENVELOPE, $SERVER_TIMESTAMP, $RECEIVED_AT) VALUES (?, ?, ?)"
@@ -54,9 +76,6 @@ class DeferredEnvelopeStore(
     }
   }
 
-  /**
-   * Returns all deferred envelopes ordered by receipt time.
-   */
   fun getAll(): List<DeferredEnvelope> {
     val results = mutableListOf<DeferredEnvelope>()
     db.query(TABLE_NAME, null, null, null, null, null, "$RECEIVED_AT ASC").use { cursor ->
@@ -78,23 +97,14 @@ class DeferredEnvelopeStore(
     return results
   }
 
-  /**
-   * Deletes a deferred envelope after successful processing.
-   */
   fun delete(id: Long) {
     db.delete(TABLE_NAME, "$ID = ?", arrayOf(id.toString()))
   }
 
-  /**
-   * Deletes all deferred envelopes (e.g., after a full drain).
-   */
   fun deleteAll() {
     db.delete(TABLE_NAME, null, null)
   }
 
-  /**
-   * Returns the count of pending deferred envelopes.
-   */
   fun count(): Int {
     db.query(TABLE_NAME, arrayOf("COUNT(*)"), null, null, null, null, null).use { cursor ->
       if (cursor.moveToFirst()) return cursor.getInt(0)
@@ -103,9 +113,7 @@ class DeferredEnvelopeStore(
   }
 
   override fun close() {
-    if (db.isOpen) {
-      db.close()
-    }
+    if (db.isOpen) db.close()
   }
 
   private fun ensureTable() {
@@ -121,6 +129,8 @@ class DeferredEnvelopeStore(
 
   companion object {
     private val TAG = Log.tag(DeferredEnvelopeStore::class.java)
+
+    const val DB_NAME = "deferred-envelopes.db"
 
     private const val TABLE_NAME = "deferred_envelopes"
     private const val ID = "_id"

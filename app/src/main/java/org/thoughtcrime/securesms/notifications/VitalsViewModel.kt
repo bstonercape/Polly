@@ -51,6 +51,9 @@ class VitalsViewModel(private val context: Application) : AndroidViewModel(conte
 
   private fun checkHeuristics(): Single<State> {
     return Single.fromCallable {
+      if (SignalStore.account.aci == null) {
+        return@fromCallable State.NONE
+      }
       val deviceSpecificCondition = SlowNotificationHeuristics.getDeviceSpecificShowCondition()
 
       if (deviceSpecificCondition == ShowCondition.ALWAYS && SlowNotificationHeuristics.shouldShowDeviceSpecificDialog()) {

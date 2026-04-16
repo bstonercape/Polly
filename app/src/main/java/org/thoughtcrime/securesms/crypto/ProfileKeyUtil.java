@@ -23,7 +23,12 @@ public final class ProfileKeyUtil {
 
   public static synchronized @NonNull ProfileKey getSelfProfileKey() {
     try {
-      return new ProfileKey(Recipient.self().getProfileKey());
+      byte[] profileKey = Recipient.self().getProfileKey();
+      if (profileKey == null) {
+        Log.w(TAG, "Self profile key is null (likely during multi-account registration). Generating a temporary key.");
+        return createNew();
+      }
+      return new ProfileKey(profileKey);
     } catch (InvalidInputException e) {
       throw new AssertionError(e);
     }

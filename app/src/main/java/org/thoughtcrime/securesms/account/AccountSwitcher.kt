@@ -131,6 +131,47 @@ object AccountSwitcher {
   }
 
   /**
+   * Removes any accounts that were started but never completed registration.
+   * Called once during app startup, before databases are opened, so a partial
+   * active account can be swapped out before [sqlcipher-init] tries to open it.
+   *
+   * A "partial" account has no credentials (ACI + service password), meaning it
+   * was created via [addAccount] but the registration flow was interrupted before
+   * it could be committed.
+   */
+  @JvmStatic
+  fun cleanupPartialAccounts(application: Application) {
+    val registry = AccountRegistry.getInstance(application)
+    val accounts = registry.getAllAccounts()
+    val partialAccounts = accounts.filter { !it.hasCredentials }
+
+    if (partialAccounts.isEmpty()) return
+
+    Log.i(TAG, "Cleaning up ${partialAccounts.size} partial account(s)")
+
+    for (account in partialAccounts) {
+      if (account.isActive) {
+        // Promote a valid account to active so sqlcipher-init opens a good database.
+        val fallback = accounts.firstOrNull { it.accountId != account.accountId && it.hasCredentials }
+        if (fallback != null) {
+          Log.i(TAG, "Partial active account ${account.accountId} — promoting ${fallback.accountId}")
+          registry.setActiveAccount(fallback.accountId)
+          reinitDatabases(application, fallback.accountId)
+        } else {
+          Log.i(TAG, "Partial active account ${account.accountId} with no valid fallback — app will show registration")
+          // Leave the registry empty after removal; the app's normal unregistered
+          // path will handle re-registration on the next screen.
+        }
+      }
+
+      BackgroundAccountManager.stopReceiver(account.accountId)
+      AccountFileManager.deleteAccountDir(application, account.accountId)
+      registry.removeAccount(account.accountId)
+      Log.i(TAG, "Removed partial account ${account.accountId}")
+    }
+  }
+
+  /**
    * Removes an account, deleting its data and registry entry.
    * Cannot remove the currently active account.
    */

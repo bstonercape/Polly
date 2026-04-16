@@ -91,9 +91,27 @@ class RegistrationActivity : BaseActivity() {
       SignalStore.misc.shouldShowLinkedDevicesReminder = sharedViewModel.isReregister
     }
 
-    startActivity(MainActivity.clearTop(this))
-    finish()
-    ActivityNavigator.applyPopAnimationsToPendingTransition(this)
+    lifecycleScope.launch(Dispatchers.IO) {
+      // Persist the newly-registered account's credentials (ACI, e164, servicePassword) into
+      // the AccountRegistry before we navigate away. Without this, a process restart before the
+      // account switcher is opened would trigger cleanupPartialAccounts() to see this account as
+      // credential-less and permanently delete it.
+      AccountSwitcher.syncRegistryWithActiveAccount(application)
+      withContext(Dispatchers.Main) {
+        // When adding a new account, omit SINGLE_TOP so Android destroys the existing
+        // MainActivity instance (standard launchMode) and creates a fresh one. This
+        // ensures ViewModels are re-initialized for the newly active account rather
+        // than showing stale data from the previous account.
+        val intent = if (isAddingAccount) {
+          MainActivity.clearTopForNewAccount(this@RegistrationActivity)
+        } else {
+          MainActivity.clearTop(this@RegistrationActivity)
+        }
+        startActivity(intent)
+        finish()
+        ActivityNavigator.applyPopAnimationsToPendingTransition(this@RegistrationActivity)
+      }
+    }
   }
 
   private inner class SmsRetrieverObserver : DefaultLifecycleObserver {

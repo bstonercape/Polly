@@ -36,7 +36,9 @@ import androidx.navigation.fragment.findNavController
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.signal.core.ui.compose.ComposeFragment
 import org.signal.core.ui.compose.DayNightPreviews
 import org.signal.core.ui.compose.Dialogs
@@ -54,6 +56,8 @@ import org.thoughtcrime.securesms.lock.v2.CreateSvrPinActivity
 import org.thoughtcrime.securesms.lock.v2.PinKeyboardType
 import org.thoughtcrime.securesms.lock.v2.SvrConstants
 import org.thoughtcrime.securesms.pin.RegistrationLockV2Dialog
+import org.thoughtcrime.securesms.account.AccountRegistry
+import org.thoughtcrime.securesms.account.AccountSwitcher
 import org.thoughtcrime.securesms.registration.ui.RegistrationActivity
 import org.thoughtcrime.securesms.util.PlayStoreUtil
 import org.thoughtcrime.securesms.util.ServiceUtil
@@ -202,6 +206,21 @@ class AccountSettingsFragment : ComposeFragment() {
       startActivity(RegistrationActivity.newIntentForReRegistration(requireContext()))
     }
 
+    override fun removeAccount() {
+      val application = requireContext().applicationContext as android.app.Application
+      val registry = AccountRegistry.getInstance(application)
+      val currentAccountId = registry.getActiveAccount()?.accountId ?: return
+      val switchTarget = registry.getAllAccounts().firstOrNull { it.accountId != currentAccountId } ?: return
+
+      lifecycleScope.launch(Dispatchers.IO) {
+        AccountSwitcher.switchToAccount(application, switchTarget.accountId)
+        AccountSwitcher.removeAccount(application, currentAccountId)
+        withContext(Dispatchers.Main) {
+          requireActivity().recreate()
+        }
+      }
+    }
+
     override fun openDeleteAccountFlow() {
       findNavController().safeNavigate(R.id.action_accountSettingsFragment_to_deleteAccountFragment)
     }
@@ -229,6 +248,7 @@ interface AccountSettingsScreenCallbacks {
   fun openExportAccountDataFlow() = Unit
   fun openUpdateAppFlow() = Unit
   fun openReRegistrationFlow() = Unit
+  fun removeAccount() = Unit
   fun openDeleteAccountFlow() = Unit
   fun deleteAllData() = Unit
 
@@ -248,6 +268,7 @@ object AccountSettingsTestTags {
   const val ROW_UPDATE_SIGNAL = "row-update-signal"
   const val ROW_RE_REGISTER = "row-re-register"
   const val ROW_DELETE_ALL_DATA = "row-delete-all-data"
+  const val ROW_REMOVE_ACCOUNT = "row-remove-account"
   const val ROW_DELETE_ACCOUNT = "row-delete-account"
   const val DIALOG_CONFIRM_DELETE_ALL_DATA = "dialog-confirm-delete-all-data"
 }
@@ -407,6 +428,38 @@ fun AccountSettingsScreen(
             DeleteAllDataConfirmationDialog(
               onDismissRequest = { displayDialog = false },
               onConfirm = callbacks::deleteAllData
+            )
+          }
+        }
+      }
+
+      if (state.canRemoveAccount) {
+        item {
+          var displayRemoveDialog by remember { mutableStateOf(false) }
+
+          Rows.TextRow(
+            text = {
+              Text(
+                text = stringResource(R.string.preferences_account_remove_account),
+                style = MaterialTheme.typography.bodyLarge,
+                color = colorResource(R.color.signal_alert_primary)
+              )
+            },
+            onClick = { displayRemoveDialog = true },
+            modifier = Modifier.testTag(AccountSettingsTestTags.ROW_REMOVE_ACCOUNT)
+          )
+
+          if (displayRemoveDialog) {
+            Dialogs.SimpleAlertDialog(
+              title = stringResource(R.string.preferences_account_remove_account_confirmation_title),
+              body = stringResource(R.string.preferences_account_remove_account_confirmation_message),
+              confirm = stringResource(R.string.preferences_account_remove_account_confirmation_proceed),
+              onConfirm = {
+                displayRemoveDialog = false
+                callbacks.removeAccount()
+              },
+              dismiss = stringResource(R.string.preferences_account_remove_account_confirmation_cancel),
+              onDismissRequest = { displayRemoveDialog = false }
             )
           }
         }

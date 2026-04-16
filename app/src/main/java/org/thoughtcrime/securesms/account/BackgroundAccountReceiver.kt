@@ -1,12 +1,19 @@
 package org.thoughtcrime.securesms.account
 
+import android.Manifest
 import android.app.Application
-import android.app.NotificationManager
-import android.content.Context
+import android.app.PendingIntent
+import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import io.reactivex.rxjava3.disposables.Disposable
+import org.signal.core.util.PendingIntentFlags.immutable
 import org.signal.core.util.logging.Log
+import org.thoughtcrime.securesms.MainActivity
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.notifications.NotificationChannels
+import org.thoughtcrime.securesms.notifications.NotificationIds
 import org.whispersystems.signalservice.api.websocket.SignalWebSocket
 import org.whispersystems.signalservice.internal.push.Envelope
 import java.io.Closeable
@@ -36,6 +43,13 @@ class BackgroundAccountReceiver(
   private var receiverThread: Thread? = null
   private var deferredStore: DeferredEnvelopeStore? = null
 
+  // Stable per-account notification ID in the BACKGROUND_ACCOUNT_MESSAGE range.
+  // Account IDs are "account-0", "account-1", etc. — parse the index directly.
+  private val notificationId: Int = run {
+    val index = entry.accountId.removePrefix("account-").toIntOrNull() ?: 0
+    NotificationIds.BACKGROUND_ACCOUNT_MESSAGE + index
+  }
+
   /**
    * Starts the receiver: creates the WebSocket, connects, and begins the
    * envelope reading loop on a background thread.
@@ -53,33 +67,63 @@ class BackgroundAccountReceiver(
       return
     }
     webSocket = ws
-    deferredStore = DeferredEnvelopeStore(application, entry.accountId)
+    try {
+      deferredStore = DeferredEnvelopeStore(application, entry.accountId)
+    } catch (e: Exception) {
+      Log.w(TAG, "[${entry.accountId}] Failed to open deferred envelope store", e)
+      running.set(false)
+      ws.disconnect()
+      webSocket = null
+      return
+    }
 
     receiverThread = Thread({
       Log.i(TAG, "[${entry.accountId}] Receiver thread started")
-      ws.connect()
+      ws.registerKeepAliveToken(KEEP_ALIVE_TOKEN)
 
+      // Log WebSocket state transitions so we can confirm it actually connects.
+      val stateDisposable = ws.state.subscribe { state ->
+        Log.i(TAG, "[${entry.accountId}] WebSocket state → $state")
+      }
+
+      ws.connect()
+      Log.i(TAG, "[${entry.accountId}] connect() called, waiting for messages…")
+
+      var totalReceived = 0
       while (running.get()) {
         try {
+          Log.d(TAG, "[${entry.accountId}] readMessageBatch() blocking (timeout=${WEBSOCKET_READ_TIMEOUT_MS}ms)")
           val hasMore = ws.readMessageBatch(WEBSOCKET_READ_TIMEOUT_MS, BATCH_SIZE) { batch ->
+            Log.i(TAG, "[${entry.accountId}] Batch received: ${batch.size} envelope(s)")
             for (response in batch) {
+              totalReceived++
+              Log.i(TAG, "[${entry.accountId}] Storing envelope #$totalReceived (type=${response.envelope.type})")
               storeAndNotify(response.envelope, response.serverDeliveredTimestamp)
+              try {
+                ws.sendAck(response)
+                Log.d(TAG, "[${entry.accountId}] ACKed envelope #$totalReceived")
+              } catch (e: Exception) {
+                Log.w(TAG, "[${entry.accountId}] Failed to ack envelope #$totalReceived", e)
+              }
             }
           }
 
           if (!hasMore && running.get()) {
-            // Queue drained — wait for new messages
+            Log.d(TAG, "[${entry.accountId}] Queue drained (total received so far: $totalReceived), sleeping ${IDLE_SLEEP_MS}ms")
             Thread.sleep(IDLE_SLEEP_MS)
           }
+        } catch (e: java.util.concurrent.TimeoutException) {
+          // No messages arrived in the read window — normal idle behavior, just loop.
         } catch (e: Exception) {
           if (running.get()) {
-            Log.w(TAG, "[${entry.accountId}] Error reading from WebSocket, will retry", e)
+            Log.w(TAG, "[${entry.accountId}] Error reading from WebSocket (total received: $totalReceived), will retry in ${RETRY_SLEEP_MS}ms", e)
             Thread.sleep(RETRY_SLEEP_MS)
           }
         }
       }
 
-      Log.i(TAG, "[${entry.accountId}] Receiver thread exiting")
+      stateDisposable.dispose()
+      Log.i(TAG, "[${entry.accountId}] Receiver thread exiting (total received: $totalReceived)")
     }, "bg-receiver-${entry.accountId}").apply {
       isDaemon = true
       start()
@@ -96,6 +140,7 @@ class BackgroundAccountReceiver(
     if (!running.getAndSet(false)) return
 
     Log.i(TAG, "[${entry.accountId}] Stopping background receiver")
+    webSocket?.removeKeepAliveToken(KEEP_ALIVE_TOKEN)
     webSocket?.disconnect()
     receiverThread?.interrupt()
     try {
@@ -122,28 +167,55 @@ class BackgroundAccountReceiver(
   override fun close() = stop()
 
   private fun storeAndNotify(envelope: Envelope, serverDeliveredTimestamp: Long) {
-    // Store the raw envelope for processing when this account becomes active
     deferredStore?.insert(envelope, serverDeliveredTimestamp)
-
-    // Post a lightweight notification (no decrypted content)
     postNotification()
   }
 
   private fun postNotification() {
-    val accountLabel = entry.displayName ?: entry.e164 ?: entry.accountId
-    val notificationManager = application.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    val permissionGranted = ContextCompat.checkSelfPermission(application, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    Log.i(TAG, "[${entry.accountId}] postNotification: POST_NOTIFICATIONS granted=$permissionGranted, notificationId=$notificationId")
+    if (!permissionGranted) {
+      return
+    }
 
-    val notification = NotificationCompat.Builder(application, NotificationChannels.getInstance().messagesChannel)
+    val channelId = try {
+      NotificationChannels.getInstance().ADDITIONAL_MESSAGE_NOTIFICATIONS
+    } catch (e: Exception) {
+      Log.w(TAG, "[${entry.accountId}] Failed to get notification channel", e)
+      return
+    }
+    Log.i(TAG, "[${entry.accountId}] Using channel: $channelId")
+
+    val notificationManager = NotificationManagerCompat.from(application)
+    val areEnabled = notificationManager.areNotificationsEnabled()
+    Log.i(TAG, "[${entry.accountId}] areNotificationsEnabled=$areEnabled")
+    if (!areEnabled) {
+      Log.w(TAG, "[${entry.accountId}] Notifications disabled at app level, skipping")
+      return
+    }
+
+    val accountLabel = entry.displayName ?: entry.e164 ?: entry.accountId
+    val tapIntent = PendingIntent.getActivity(
+      application,
+      notificationId,
+      MainActivity.backgroundAccountNotification(application, entry.accountId),
+      immutable()
+    )
+
+    val notification = NotificationCompat.Builder(application, channelId)
       .setSmallIcon(R.drawable.ic_notification)
       .setContentTitle(accountLabel)
       .setContentText(application.getString(R.string.FcmFetchManager__you_may_have_messages))
+      .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+      .setContentIntent(tapIntent)
+      .setVibrate(longArrayOf(0))
+      .setOnlyAlertOnce(true)
       .setAutoCancel(true)
-      .setGroup("background_${entry.accountId}")
       .build()
 
-    // Use a stable notification ID per account so repeated messages update the same notification
-    val notificationId = NOTIFICATION_ID_BASE + entry.accountId.hashCode()
+    Log.i(TAG, "[${entry.accountId}] Posting notification id=$notificationId for '$accountLabel'")
     notificationManager.notify(notificationId, notification)
+    Log.i(TAG, "[${entry.accountId}] notify() returned (notification posted)")
   }
 
   companion object {
@@ -154,6 +226,6 @@ class BackgroundAccountReceiver(
     private const val IDLE_SLEEP_MS = 1000L
     private const val RETRY_SLEEP_MS = 5000L
     private const val THREAD_JOIN_TIMEOUT_MS = 5000L
-    private const val NOTIFICATION_ID_BASE = 900000
+    private const val KEEP_ALIVE_TOKEN = "BackgroundAccountReceiver"
   }
 }

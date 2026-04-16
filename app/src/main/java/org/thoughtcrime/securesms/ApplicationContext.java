@@ -170,6 +170,7 @@ public class ApplicationContext extends Application implements AppForegroundObse
                 SqlCipherLibraryLoader.load();
                 AccountSwitcher.migrateToMultiAccountIfNeeded(this);
               })
+              .addBlocking("account-cleanup", () -> AccountSwitcher.cleanupPartialAccounts(this))
               .addBlocking("sqlcipher-init", () -> {
                 AccountRegistry registry = AccountRegistry.getInstance(this);
                 AccountRegistry.AccountEntry activeAccount = registry.getActiveAccount();

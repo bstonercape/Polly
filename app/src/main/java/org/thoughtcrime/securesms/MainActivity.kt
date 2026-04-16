@@ -217,12 +217,25 @@ class MainActivity :
 
     private const val KEY_STARTING_TAB = "STARTING_TAB"
     private const val KEY_DETAIL_LOCATION = "DETAIL_LOCATION"
+    private const val EXTRA_BACKGROUND_ACCOUNT_ID = "extra_background_account_id"
     const val RESULT_CONFIG_CHANGED = Activity.RESULT_FIRST_USER + 901
 
     @JvmStatic
     fun clearTop(context: Context): Intent {
       return Intent(context, MainActivity::class.java)
         .setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    }
+
+    /**
+     * Like [clearTop] but omits FLAG_ACTIVITY_SINGLE_TOP so that, for activities with a
+     * standard launch mode, the existing instance is destroyed and a fresh one is created.
+     * Use this when returning from an add-account registration to ensure ViewModels are
+     * re-initialized for the newly active account.
+     */
+    @JvmStatic
+    fun clearTopForNewAccount(context: Context): Intent {
+      return Intent(context, MainActivity::class.java)
+        .setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
     @JvmStatic
@@ -233,6 +246,11 @@ class MainActivity :
     @JvmStatic
     fun clearTopAndOpenDetail(context: Context, location: MainNavigationDetailLocation): Intent {
       return clearTop(context).putExtra(KEY_DETAIL_LOCATION, location)
+    }
+
+    @JvmStatic
+    fun backgroundAccountNotification(context: Context, accountId: String): Intent {
+      return clearTop(context).putExtra(EXTRA_BACKGROUND_ACCOUNT_ID, accountId)
     }
   }
 
@@ -1013,6 +1031,7 @@ class MainActivity :
   }
 
   private fun handleDeepLinkIntent(intent: Intent) {
+    handleBackgroundAccountNotificationIntent(intent)
     handleConversationIntent(intent)
     handleGroupLinkInIntent(intent)
     handleProxyInIntent(intent)
@@ -1020,6 +1039,13 @@ class MainActivity :
     handleCallLinkInIntent(intent)
     handleDonateReturnIntent(intent)
     handleQuickRestoreIntent(intent)
+  }
+
+  private fun handleBackgroundAccountNotificationIntent(intent: Intent) {
+    val accountId = intent.getStringExtra(EXTRA_BACKGROUND_ACCOUNT_ID) ?: return
+    // Consume immediately so rotation or back-stack re-delivery doesn't re-trigger.
+    intent.removeExtra(EXTRA_BACKGROUND_ACCOUNT_ID)
+    onAccountSelected(accountId)
   }
 
   @SuppressLint("NewApi")
@@ -1357,8 +1383,12 @@ class MainActivity :
 
   override fun onAddAccountClicked() {
     lifecycleScope.launch(Dispatchers.IO) {
-      val previousAccountId = AccountSwitcher.getActiveAccount(application)?.accountId
       val newAccountId = AccountSwitcher.addAccount(application)
+      // Capture previousAccountId AFTER addAccount() so that the first-ever add-account
+      // migration (which creates account-0 in the registry) has already run. If we read
+      // the active account before addAccount(), the registry is still empty and we get null,
+      // which breaks cancelAddAccount() when the user backs out of registration.
+      val previousAccountId = AccountSwitcher.getActiveAccount(application)?.accountId
       AccountSwitcher.switchToAccount(application, newAccountId)
       withContext(Dispatchers.Main) {
         startActivity(RegistrationActivity.newIntentForAddAccount(this@MainActivity, intent, newAccountId, previousAccountId))
