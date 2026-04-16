@@ -19,8 +19,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -67,6 +69,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.signal.core.ui.compose.DayNightPreviews
 import org.signal.core.ui.compose.DropdownMenus
@@ -429,14 +432,24 @@ private fun PrimaryToolbar(
       }
     },
     title = {
-      val profileName = state.self.profileName.toString()
-      val titleText = if (profileName.isNotBlank()) {
-        profileName
-      } else {
-        state.self.e164.orElse(null)?.let { formatE164ForDisplay(it) }
-          ?: stringResource(R.string.app_name)
+      val profileName = state.self.profileName.toString().takeIf { it.isNotBlank() }
+      val phoneNumber = state.self.e164.orElse(null)?.let { formatE164ForDisplay(it) }
+      Column(verticalArrangement = Arrangement.Center) {
+        Text(
+          text = profileName ?: phoneNumber ?: stringResource(R.string.app_name),
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+        )
+        if (profileName != null && phoneNumber != null) {
+          Text(
+            text = phoneNumber,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+          )
+        }
       }
-      Text(text = titleText)
     },
     actions = {
       NotificationProfileAction(state, callback)

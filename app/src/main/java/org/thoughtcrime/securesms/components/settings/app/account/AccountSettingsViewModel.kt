@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import org.thoughtcrime.securesms.account.AccountRegistry
 import org.thoughtcrime.securesms.dependencies.AppDependencies
 import org.thoughtcrime.securesms.keyvalue.SignalStore
 import org.thoughtcrime.securesms.util.TextSecurePreferences
@@ -32,7 +33,8 @@ class AccountSettingsViewModel : ViewModel() {
       registrationLockEnabled = SignalStore.svr.isRegistrationLockEnabled,
       userUnregistered = TextSecurePreferences.isUnauthorizedReceived(AppDependencies.application),
       clientDeprecated = SignalStore.misc.isClientDeprecated,
-      canTransferWhileUnregistered = true
+      canTransferWhileUnregistered = true,
+      canRemoveAccount = AccountRegistry.getInstance(AppDependencies.application).getAccountCount() > 1
     )
   }
 }

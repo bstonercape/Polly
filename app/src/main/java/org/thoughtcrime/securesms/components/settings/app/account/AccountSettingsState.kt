@@ -10,7 +10,8 @@ data class AccountSettingsState(
   val registrationLockEnabled: Boolean,
   val userUnregistered: Boolean,
   val clientDeprecated: Boolean,
-  val canTransferWhileUnregistered: Boolean
+  val canTransferWhileUnregistered: Boolean,
+  val canRemoveAccount: Boolean = false
 ) {
   fun isNotDeprecatedOrUnregistered(): Boolean {
     return !(userUnregistered || clientDeprecated)

@@ -47,6 +47,7 @@ import org.signal.ringrtc.CallManager;
 import org.thoughtcrime.securesms.account.AccountFileManager;
 import org.thoughtcrime.securesms.account.AccountRegistry;
 import org.thoughtcrime.securesms.account.AccountSwitcher;
+import org.thoughtcrime.securesms.account.BackgroundAccountManager;
 import org.thoughtcrime.securesms.apkupdate.ApkUpdateRefreshListener;
 import org.thoughtcrime.securesms.avatar.AvatarPickerStorage;
 import org.thoughtcrime.securesms.backup.v2.BackupRepository;
@@ -169,6 +170,7 @@ public class ApplicationContext extends Application implements AppForegroundObse
                 SqlCipherLibraryLoader.load();
                 AccountSwitcher.migrateToMultiAccountIfNeeded(this);
               })
+              .addBlocking("account-cleanup", () -> AccountSwitcher.cleanupPartialAccounts(this))
               .addBlocking("sqlcipher-init", () -> {
                 AccountRegistry registry = AccountRegistry.getInstance(this);
                 AccountRegistry.AccountEntry activeAccount = registry.getActiveAccount();
@@ -236,6 +238,7 @@ public class ApplicationContext extends Application implements AppForegroundObse
               .addNonBlocking(() -> AppDependencies.getGiphyMp4Cache().onAppStart(this))
               .addNonBlocking(AppDependencies::getBillingApi)
               .addNonBlocking(this::ensureProfileUploaded)
+              .addNonBlocking(() -> BackgroundAccountManager.startAll(this))
               .addNonBlocking(() -> AppDependencies.getExpireStoriesManager().scheduleIfNecessary())
               .addNonBlocking(BackupRepository::maybeFixAnyDanglingUploadProgress)
               .addPostRender(() -> AppDependencies.getDeletedCallEventManager().scheduleIfNecessary())

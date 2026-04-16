@@ -562,6 +562,10 @@ public final class Megaphones {
   }
 
   private static boolean shouldShowAddAProfilePhotoMegaphone(@NonNull Context context) {
+    if (!SignalStore.account().isRegistered()) {
+      return false;
+    }
+
     if (SignalStore.misc().getHasEverHadAnAvatar()) {
       return false;
     }

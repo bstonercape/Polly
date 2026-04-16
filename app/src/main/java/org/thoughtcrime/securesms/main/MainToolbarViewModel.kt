@@ -36,6 +36,10 @@ class MainToolbarViewModel : ViewModel() {
     val nextVersion = internalStateFlow.value.selfVersion + 1
 
     viewModelScope.launch {
+      if (!SignalStore.account.isRegistered) {
+        return@launch
+      }
+
       val self = withContext(SignalDispatchers.IO) {
         Recipient.self().resolve()
       }

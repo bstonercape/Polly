@@ -244,7 +244,14 @@ object RegistrationRepository {
     AppDependencies.startNetwork()
     PreKeysSyncJob.enqueue()
 
-    recipientTable.clearSelfKeyTransparencyData()
+    // Clear key transparency data. Non-critical — during add-account registration
+    // the self recipient may not be resolvable, so catch failures gracefully.
+    try {
+      recipientTable.clearSelfKeyTransparencyData()
+    } catch (e: Throwable) {
+      Log.w(TAG, "Could not clear self key transparency data during registration", e)
+    }
+
     CheckKeyTransparencyJob.enqueueIfNecessary(addDelay = true)
 
     val jobManager = AppDependencies.jobManager

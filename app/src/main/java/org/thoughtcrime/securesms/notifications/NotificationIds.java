@@ -33,6 +33,7 @@ public final class NotificationIds {
   public static final int MAX_STORY_THREAD                  = STORY_THREAD + 100_000;
   public static final int MESSAGE_DELIVERY_FAILURE          = 800000;
   public static final int STORY_MESSAGE_DELIVERY_FAILURE    = 900000;
+  public static final int BACKGROUND_ACCOUNT_MESSAGE        = 2_000_000; // 2_000_000 + account index
   public static final int UNREGISTERED_NOTIFICATION_ID      = 20230102;
   public static final int NEW_LINKED_DEVICE                 = 120400;
   public static final int OUT_OF_REMOTE_STORAGE             = 120500;

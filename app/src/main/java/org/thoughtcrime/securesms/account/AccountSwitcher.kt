@@ -50,6 +50,10 @@ object AccountSwitcher {
     Log.i(TAG, "Switching from ${currentAccount?.accountId} to $targetAccountId")
     val startTime = System.currentTimeMillis()
 
+    // Step 0: Stop the background receiver for the target account BEFORE we touch the DB
+    Log.d(TAG, "Step 0: Stopping background receiver for target account")
+    BackgroundAccountManager.onAccountSwitch(application, currentAccount?.accountId, targetAccountId)
+
     // Step 1: Tear down network and caches
     Log.d(TAG, "Step 1: Tearing down network and caches")
     AppDependencies.resetAllForAccountSwitch()
@@ -78,6 +82,10 @@ object AccountSwitcher {
     // Step 6: Re-warm caches
     Log.d(TAG, "Step 6: Re-warming caches")
     AppDependencies.recipientCache.warmUp()
+
+    // Step 7: Start background receiver for the previously-active account
+    Log.d(TAG, "Step 7: Starting background receiver for demoted account")
+    BackgroundAccountManager.onAccountSwitchComplete(application, currentAccount?.accountId)
 
     val elapsed = System.currentTimeMillis() - startTime
     Log.i(TAG, "Account switch to $targetAccountId completed in ${elapsed}ms")
@@ -123,6 +131,47 @@ object AccountSwitcher {
   }
 
   /**
+   * Removes any accounts that were started but never completed registration.
+   * Called once during app startup, before databases are opened, so a partial
+   * active account can be swapped out before [sqlcipher-init] tries to open it.
+   *
+   * A "partial" account has no credentials (ACI + service password), meaning it
+   * was created via [addAccount] but the registration flow was interrupted before
+   * it could be committed.
+   */
+  @JvmStatic
+  fun cleanupPartialAccounts(application: Application) {
+    val registry = AccountRegistry.getInstance(application)
+    val accounts = registry.getAllAccounts()
+    val partialAccounts = accounts.filter { !it.hasCredentials }
+
+    if (partialAccounts.isEmpty()) return
+
+    Log.i(TAG, "Cleaning up ${partialAccounts.size} partial account(s)")
+
+    for (account in partialAccounts) {
+      if (account.isActive) {
+        // Promote a valid account to active so sqlcipher-init opens a good database.
+        val fallback = accounts.firstOrNull { it.accountId != account.accountId && it.hasCredentials }
+        if (fallback != null) {
+          Log.i(TAG, "Partial active account ${account.accountId} — promoting ${fallback.accountId}")
+          registry.setActiveAccount(fallback.accountId)
+          reinitDatabases(application, fallback.accountId)
+        } else {
+          Log.i(TAG, "Partial active account ${account.accountId} with no valid fallback — app will show registration")
+          // Leave the registry empty after removal; the app's normal unregistered
+          // path will handle re-registration on the next screen.
+        }
+      }
+
+      BackgroundAccountManager.stopReceiver(account.accountId)
+      AccountFileManager.deleteAccountDir(application, account.accountId)
+      registry.removeAccount(account.accountId)
+      Log.i(TAG, "Removed partial account ${account.accountId}")
+    }
+  }
+
+  /**
    * Removes an account, deleting its data and registry entry.
    * Cannot remove the currently active account.
    */
@@ -132,6 +181,7 @@ object AccountSwitcher {
     val active = registry.getActiveAccount()
     require(active?.accountId != accountId) { "Cannot remove the currently active account" }
 
+    BackgroundAccountManager.stopReceiver(accountId)
     AccountFileManager.deleteAccountDir(application, accountId)
     registry.removeAccount(accountId)
     Log.i(TAG, "Removed account: $accountId")
@@ -233,7 +283,15 @@ object AccountSwitcher {
 
     try {
       val aci = SignalStore.account.aci?.toString()
+      val pni = SignalStore.account.pni?.toString()
       val e164 = SignalStore.account.e164
+      val servicePassword = SignalStore.account.servicePassword
+      val deviceId = SignalStore.account.deviceId
+      val registrationId = SignalStore.account.registrationId
+
+      // Cache identity keys for background decryption
+      val aciIdentityKey = try { SignalStore.account.aciIdentityKey } catch (_: Exception) { null }
+      val pniIdentityKey = try { SignalStore.account.pniIdentityKey } catch (_: Exception) { null }
 
       val displayName = try {
         val profileName = Recipient.self().profileName.toString()
@@ -246,8 +304,16 @@ object AccountSwitcher {
         registry.updateAccountIdentity(
           accountId = active.accountId,
           aci = aci,
+          pni = pni,
           e164 = e164,
-          displayName = displayName
+          displayName = displayName,
+          servicePassword = servicePassword,
+          deviceId = deviceId,
+          registrationId = registrationId,
+          aciIdentityPublicKey = aciIdentityKey?.publicKey?.serialize(),
+          aciIdentityPrivateKey = aciIdentityKey?.privateKey?.serialize(),
+          pniIdentityPublicKey = pniIdentityKey?.publicKey?.serialize(),
+          pniIdentityPrivateKey = pniIdentityKey?.privateKey?.serialize()
         )
       }
 

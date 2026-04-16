@@ -16,6 +16,8 @@ import org.signal.core.util.logging.Log
 import org.signal.storageservice.storage.protos.groups.local.DecryptedGroup
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.crypto.ReentrantSessionLock
+import org.thoughtcrime.securesms.account.AccountRegistry
+import org.thoughtcrime.securesms.account.DeferredEnvelopeStore
 import org.thoughtcrime.securesms.database.SignalDatabase
 import org.thoughtcrime.securesms.dependencies.AppDependencies
 import org.thoughtcrime.securesms.groups.GroupsV2ProcessingLock
@@ -435,6 +437,7 @@ class IncomingMessageObserver(
         }
 
         try {
+          drainDeferredEnvelopes()
           authWebSocket.connect()
           var isConnectionNecessary = false
           while (!terminated && (isConnectionNecessary().also { isConnectionNecessary = it } || isConnectionAvailable())) {
@@ -513,6 +516,69 @@ class IncomingMessageObserver(
         Log.i(TAG, "Looping...")
       }
       Log.w(TAG, "Terminated! (${this.hashCode()})")
+    }
+
+    /**
+     * Processes any envelopes stored by the background receiver while this account
+     * was inactive. Called once at the start of each connection attempt, before the
+     * WebSocket connects. This ensures messages that were received and ACKed by the
+     * background receiver (and therefore removed from the server queue) are not lost.
+     */
+    private fun drainDeferredEnvelopes() {
+      Log.i(TAG, "drainDeferredEnvelopes: canProcessMessages=$canProcessMessages thread=${Thread.currentThread().name}")
+      if (!canProcessMessages) return
+
+      val application = context.applicationContext as Application
+      val registry = AccountRegistry.getInstance(application)
+      val accountId = registry.getActiveAccount()?.accountId
+      Log.i(TAG, "drainDeferredEnvelopes: activeAccountId=$accountId")
+      if (accountId == null) return
+
+      try {
+        DeferredEnvelopeStore(application, accountId).use { store ->
+          val count = store.count()
+          Log.i(TAG, "drainDeferredEnvelopes: store.count()=$count")
+          val deferred = store.getAll()
+          Log.i(TAG, "drainDeferredEnvelopes: store.getAll() returned ${deferred.size} item(s)")
+          if (deferred.isEmpty()) return
+
+          val bufferedStore = BufferedProtocolStore.create()
+          val batchCache = ReusedBatchCache()
+          var processed = 0
+          var failed = 0
+
+          GroupsV2ProcessingLock.acquireGroupProcessingLock().use {
+            ReentrantSessionLock.INSTANCE.acquire().use {
+              deferred.forEach { item ->
+                try {
+                  Log.d(TAG, "drainDeferredEnvelopes: processing item id=${item.id} type=${item.envelope.type}")
+                  val followUps = SignalDatabase.runInTransaction {
+                    val followUps = processEnvelope(bufferedStore, item.envelope, item.serverDeliveredTimestamp, batchCache)
+                    bufferedStore.flushToDisk()
+                    followUps
+                  }
+                  Log.d(TAG, "drainDeferredEnvelopes: item id=${item.id} transaction committed, followUps=${followUps?.size ?: 0}")
+                  followUps?.let {
+                    if (it.isNotEmpty()) {
+                      AppDependencies.jobManager.addAllChains(it.mapNotNull { op -> op.run() })
+                    }
+                  }
+                  store.delete(item.id)
+                  processed++
+                } catch (e: Exception) {
+                  failed++
+                  Log.w(TAG, "drainDeferredEnvelopes: failed to process item id=${item.id}", e)
+                }
+              }
+            }
+          }
+
+          batchCache.flushAndClear()
+          Log.i(TAG, "drainDeferredEnvelopes: complete — processed=$processed failed=$failed for $accountId")
+        }
+      } catch (e: Exception) {
+        Log.w(TAG, "drainDeferredEnvelopes: failed to open store for $accountId", e)
+      }
     }
 
     /**

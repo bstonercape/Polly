@@ -21,7 +21,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,12 +69,20 @@ class AccountSwitcherBottomSheet : ComposeBottomSheetDialogFragment() {
   @Composable
   override fun SheetContent() {
     val application = requireContext().applicationContext as android.app.Application
-    val registry = AccountRegistry.getInstance(application)
-    val accounts = remember {
-      AccountSwitcher.migrateToMultiAccountIfNeeded(application)
-      AccountSwitcher.syncRegistryWithActiveAccount(application)
-      registry.getAllAccounts()
+
+    // Load accounts on the IO thread so that the sync + registry read don't block
+    // the main thread. Running database writes (syncRegistryWithActiveAccount) on the
+    // main thread inside a `remember` block risks silent failures if any DB call
+    // throws — those exceptions are swallowed, leaving the new account without
+    // credentials and vulnerable to cleanupPartialAccounts on the next cold start.
+    val accounts by produceState(initialValue = emptyList<AccountRegistry.AccountEntry>()) {
+      value = withContext(Dispatchers.IO) {
+        AccountSwitcher.migrateToMultiAccountIfNeeded(application)
+        AccountSwitcher.syncRegistryWithActiveAccount(application)
+        AccountRegistry.getInstance(application).getAllAccounts()
+      }
     }
+
     val activeAccount = accounts.find { it.isActive }
 
     AccountSwitcherContent(
@@ -242,9 +249,9 @@ private fun AccountRow(
     if (isActive) {
       Icon(
         imageVector = ImageVector.vectorResource(R.drawable.symbol_check_24),
-        contentDescription = "Active account",
+        contentDescription = null,
         tint = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.size(20.dp)
+        modifier = Modifier.size(24.dp)
       )
     }
   }

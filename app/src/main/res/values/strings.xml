@@ -5109,6 +5109,13 @@
     <!-- Error message shown when we fail to delete the data for some unknown reason -->
     <string name="preferences_account_delete_all_data_failed">Failed to delete data</string>
 
+    <!-- Remove account from multi-account setup (does not delete from Signal servers) -->
+    <string name="preferences_account_remove_account">Remove this account</string>
+    <string name="preferences_account_remove_account_confirmation_title">Remove account?</string>
+    <string name="preferences_account_remove_account_confirmation_message">This will remove the account from this device. Your messages and data on Signal\'s servers will not be affected.</string>
+    <string name="preferences_account_remove_account_confirmation_proceed">Remove</string>
+    <string name="preferences_account_remove_account_confirmation_cancel">Cancel</string>
+
     <!-- TransferOrRestoreFragment -->
     <string name="TransferOrRestoreFragment__transfer_or_restore_account">Transfer or restore account</string>
     <string name="TransferOrRestoreFragment__if_you_have_previously_registered_a_signal_account">If you have previously registered a Polly account, you can transfer or restore your account and messages</string>
